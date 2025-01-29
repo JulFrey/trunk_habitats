@@ -21,12 +21,9 @@
 # - mean stem volume
 # - mean surface area
 # - mean concave perimeter vs. convex perimeter
+# - write a loop to process multiple trees
 
 library(lidR)
-
-# Load presegmented point cloud
-las = lidR::readLAS("X:/Weidbuchen/Edited/pointclouds/2024-12-13weidbuche9_greinwald.las", select = "xyz")
-
 
 # read the cpp script
 Rcpp::sourceCpp("./eigen_decomposition.cpp")
@@ -127,34 +124,48 @@ trunk_features <- function(las, k = 10L, n_cores = 1) {
   eigen <- eigen_decomposition(las, k, n_cores) # k neighbours, n cores
   las <- las |>
     add_lasattribute(eigen[,3] / (eigen[,1] + eigen[,2] + eigen[, 3]), 'Curvature', 'curvature') |>
-    add_lasattribute((eigen[,2] - eigen[,3]) / eigen[,1], 'Planarity', 'planarity') 
+    add_lasattribute((eigen[,2] - eigen[,3]) / eigen[,1], 'Planarity', 'planarity') |> 
+    add_lasattribute(1 - abs(eigen[,4]) ,'Verticality','verticality')
   return(las)
 }
 
 # test
-las |> mean_coordinate()
 
-las |> stem_volume(method = "convex")
-las |> stem_volume(method = "concave")
-
-las |> stem_surface_area(method = "convex")
-las |> stem_surface_area(method = "concave")
-
-las |> trunk_features() |> plot(color = "Curvature")
-
-test_cylinder <- as.data.frame(cbind(conicfit::calculateCircle(0,0,1, steps = 10000), runif(10000)))
-names(test_cylinder) <- c("X","Y","Z")
-test_cylinder <- LAS(test_cylinder) 
-
-# plot(test_cylinder)
+# # Load presegmented point cloud
+# las = lidR::readLAS("X:/Weidbuchen/Edited/pointclouds/2024-12-13weidbuche9_greinwald.las", select = "xyz")
 # 
-test_cylinder |> stem_volume(method = "concave")
-test_cylinder |> stem_volume(method = "convex")
+# las |> mean_coordinate()
+# 
+# las |> stem_volume(method = "convex")
+# las |> stem_volume(method = "concave")
+# 
+# las |> stem_surface_area(method = "convex")
+# las |> stem_surface_area(method = "concave")
+# 
+# las |> trunk_features() |> plot(color = "Curvature")
+# 
+# test_cylinder <- as.data.frame(cbind(conicfit::calculateCircle(0,0,1, steps = 10000), runif(10000)))
+# names(test_cylinder) <- c("X","Y","Z")
+# test_cylinder <- LAS(test_cylinder) 
+# 
+# # plot(test_cylinder)
+# # 
+# test_cylinder |> stem_volume(method = "concave")
+# test_cylinder |> stem_volume(method = "convex")
+# 
+# test_cylinder |> convex_perimeter(method = "convex")
+# test_cylinder |> convex_perimeter(method = "concave")
+# 
+# test_cylinder |> stem_surface_area(method = "convex")
+# test_cylinder |> stem_surface_area(method = "concave")
 
-test_cylinder |> convex_perimeter(method = "convex")
-test_cylinder |> convex_perimeter(method = "concave")
+# final loop
+files <- list.files("X:/Weidbuchen/Edited/pointclouds/", pattern = ".las", full.names = TRUE)
+results <- data.frame(file = character(), X = numeric(), Y = numeric(), Z = numeric(), volume_convex = numeric(), volume_concave = numeric(), surface_area_convex = numeric(), surface_area_concave = numeric(), mean_curvature = numeric(), mean_planarity = numeric(), mean_verticality = numeric(), stringsAsFactors = FALSE)
 
-test_cylinder |> stem_surface_area(method = "convex")
-test_cylinder |> stem_surface_area(method = "concave")
+for( f in files){
+  las <- lidR::readLAS(f, select = "xyz")
+  las <- trunk_features(las)
+  results <- rbind(results, data.frame(file = f, mean_coordinate(las), stem_volume(las, method = "convex"), stem_volume(las, method = "concave"), stem_surface_area(las, method = "convex"), stem_surface_area(las, method = "concave"), mean(las$Curvature), mean(las$Planarity), mean(las$Verticality)))
+}
 
-test_cylinder |> eigenvalues()
