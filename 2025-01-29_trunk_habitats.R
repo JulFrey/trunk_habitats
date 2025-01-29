@@ -5,9 +5,19 @@
 ## 2025-01-29
 ##################
 
+# requires RTools https://cran.r-project.org/bin/windows/Rtools/
+
+## necessary packages 
+# concaveman
+# lidR
+# conicfit
+# sf
+# Rcpp
+
 # ToDos
 # - mean coordinate of evry tree
-# - mean surface variation/planarity
+# - mean surface variation l3 / (l1 + l2 + l3)
+# - mean planarity (l2 - l3) / l1
 # - mean stem volume
 # - mean surface area
 # - mean concave perimeter vs. convex perimeter
@@ -15,7 +25,11 @@
 library(lidR)
 
 # Load presegmented point cloud
-las = readLAS("X:/Weidbuchen/Edited/pointclouds/2024-12-13weidbuche9_greinwald.las", select = "xyz")
+las = lidR::readLAS("X:/Weidbuchen/Edited/pointclouds/2024-12-13weidbuche9_greinwald.las", select = "xyz")
+
+
+# read the cpp script
+Rcpp::sourceCpp("./eigen_decomposition.cpp")
 
 # function to calculate the area of a convex hull
 convhull_area <- function(xy, method = c("convex", "concave")){
@@ -99,6 +113,24 @@ mean_coordinate <- function(las){
 }
 
 
+# function to compute the eigenvalues
+trunk_features <- function(las, k = 10L, n_cores = 1) {
+  # check if inputs of the right type
+  if (!lidR::is(las,"LAS")) {
+    stop('las has to be a LAS object.')
+  }
+  if(!(as.integer(k) == k & length(k) == 1 & k > 0 )) {
+    stop('k has to be one positive integer.')
+  }
+  # necessary for raster_geometry
+  # returns geometric features based on eigenvalues
+  eigen <- eigen_decomposition(las, k, n_cores) # k neighbours, n cores
+  las <- las |>
+    add_lasattribute(eigen[,3] / (eigen[,1] + eigen[,2] + eigen[, 3]), 'Curvature', 'curvature') |>
+    add_lasattribute((eigen[,2] - eigen[,3]) / eigen[,1], 'Planarity', 'planarity') 
+  return(las)
+}
+
 # test
 las |> mean_coordinate()
 
@@ -108,6 +140,7 @@ las |> stem_volume(method = "concave")
 las |> stem_surface_area(method = "convex")
 las |> stem_surface_area(method = "concave")
 
+las |> trunk_features() |> plot(color = "Curvature")
 
 test_cylinder <- as.data.frame(cbind(conicfit::calculateCircle(0,0,1, steps = 10000), runif(10000)))
 names(test_cylinder) <- c("X","Y","Z")
@@ -123,3 +156,5 @@ test_cylinder |> convex_perimeter(method = "concave")
 
 test_cylinder |> stem_surface_area(method = "convex")
 test_cylinder |> stem_surface_area(method = "concave")
+
+test_cylinder |> eigenvalues()
