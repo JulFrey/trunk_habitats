@@ -14,8 +14,8 @@
 # sf
 # Rcpp
 
-# ToDos
-# - mean coordinate of evry tree
+## Functions:
+# - mean coordinate of every tree
 # - mean surface variation l3 / (l1 + l2 + l3)
 # - mean planarity (l2 - l3) / l1
 # - mean stem volume
@@ -111,7 +111,7 @@ mean_coordinate <- function(las){
 
 
 # function to compute the eigenvalues
-trunk_features <- function(las, k = 10L, n_cores = 1) {
+trunk_features <- function(las, k = 10L, n_cores = ceiling(parallel::detectCores()/2)) {
   # check if inputs of the right type
   if (!lidR::is(las,"LAS")) {
     stop('las has to be a LAS object.')
@@ -163,9 +163,32 @@ trunk_features <- function(las, k = 10L, n_cores = 1) {
 files <- list.files("X:/Weidbuchen/Edited/pointclouds/", pattern = ".las", full.names = TRUE)
 results <- data.frame(file = character(), X = numeric(), Y = numeric(), Z = numeric(), volume_convex = numeric(), volume_concave = numeric(), surface_area_convex = numeric(), surface_area_concave = numeric(), mean_curvature = numeric(), mean_planarity = numeric(), mean_verticality = numeric(), stringsAsFactors = FALSE)
 
+pb = txtProgressBar(min = 0, max = length(files), initial = 0, style = 3) 
+i <- 1
+
+t1 <- Sys.time()
 for( f in files){
   las <- lidR::readLAS(f, select = "xyz")
   las <- trunk_features(las)
-  results <- rbind(results, data.frame(file = f, mean_coordinate(las), stem_volume(las, method = "convex"), stem_volume(las, method = "concave"), stem_surface_area(las, method = "convex"), stem_surface_area(las, method = "concave"), mean(las$Curvature), mean(las$Planarity), mean(las$Verticality)))
+  xyz <-  mean_coordinate(las)
+  results <- rbind(results, 
+                   data.frame(
+                     file = f, 
+                     X = xyz[1], 
+                     Y = xyz[2], 
+                     Z = xyz[3], 
+                     volume_convex = stem_volume(las, method = "convex"), 
+                     volume_concave = stem_volume(las, method = "concave"), 
+                     surface_convex = stem_surface_area(las, method = "convex"), 
+                     surface_concave = stem_surface_area(las, method = "concave"), 
+                     mean_curvature = mean(las$Curvature), 
+                     mean_planarity = mean(las$Planarity), 
+                     mean_verticality = mean(las$Verticality)
+                     )
+                   )
+  setTxtProgressBar(pb, i)
+  i <- i + 1
 }
-
+close(pb)
+t2 <- Sys.time()
+t2 - t1
