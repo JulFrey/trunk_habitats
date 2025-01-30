@@ -28,15 +28,25 @@ library(lidR)
 # read the cpp script
 Rcpp::sourceCpp("./eigen_decomposition.cpp")
 
-# function to calculate the area of a convex hull
-convhull_area <- function(xy, method = c("convex", "concave")){
+#' function to calculate the area of a convex hull
+#' @param xy a matrix or data.table with x and y coordinates
+#' @param method either 'convex' or 'concave' depending if a convex or cancave hull should be used
+#' @param concavity the concavity parameter for the concave hull ignored if method is 'convex'
+#' 
+#' @return the area of the convex or concave hull
+#' 
+#' @examples
+#' xy <- data.frame(X = runif(100), Y = runif(100))
+#' convhull_area(xy, method = "convex")
+#' convhull_area(xy, method = "concave", concavity = 1)
+convhull_area <- function(xy, method = c("convex", "concave"), concavity = 1){
   method <- method[1]
   xy <- xy |> as.data.frame()
   if(nrow(xy) < 3){
     return(NA)
   }
   if(method == "concave"){
-    ch <- concaveman::concaveman(as.matrix(xy), concavity = 0.1)
+    ch <- concaveman::concaveman(as.matrix(xy), concavity = concavity)
     return(abs(0.5 * sum(ch[,1] * c(tail(ch[,2], -1), head(ch[,2], 1)) - c(tail(ch[,1], -1), head(ch[,1], 1)) * ch[,2])))
   } else if(method == "convex"){
     ch <- chull(xy)
@@ -47,27 +57,53 @@ convhull_area <- function(xy, method = c("convex", "concave")){
   
 }
 
-# na to zero
+#' na to zero
+#' @param x a numeric vector
+#' 
+#' @return a numeric vector with NAs replaced by 0
+#' 
+#' @examples
+#' c(1,2,NA,4) |> na2zero()
 na2zero <- function(x){
   x[is.na(x)] <- 0
   return(x)
 }
 
-# function to calculate stem volume
-stem_volume <- function(las, slice_height = 0.1, method = c("convex", "concave")) {
+#' function to calculate stem volume
+#' 
+#' The function slices the point cloud in Z direction in slices of a given 
+#' height and calculates the volume of the 2D convex/concave hull * height of each slice.
+#' 
+#' @param las a LAS object of a tree trunk
+#' @param slice_height the height of the slices
+#' @param method either 'convex' or 'concave' depending if a convex or cancave hull should be used
+#' @param concavity the concavity parameter for the concave hull ignored if method is 'convex'
+#' 
+#' @return the volume of the stem in point cloud units
+stem_volume <- function(las, slice_height = 0.1, method = c("convex", "concave"), concavity = 1) {
   z_range <- range(las$Z)
   z_slices <- seq(z_range[1], z_range[2], slice_height)
   stem_volume <- 0
   for(i in 1:(length(z_slices) - 1)){
     slice <- filter_poi(las, Z >= z_slices[i] & Z < z_slices[i + 1])@data
     if(nrow(slice) > 0){
-      stem_volume <- stem_volume + na2zero(convhull_area(slice[,c("X","Y")], method = method[1]) * slice_height)
+      stem_volume <- stem_volume + na2zero(convhull_area(slice[,c("X","Y")], method = method[1], concavity = concavity) * slice_height)
     }
   }
   return(stem_volume)
 }
 
-# function to compute convex/concave perimeter
+#' function to compute convex/concave perimeter
+#' 
+#' The function calculates the convex/concave perimeter of a slice of the point cloud
+#' to avoid artefacts the concave perimeter is simplified using sf::st_simplify
+#' 
+#' @param slice a slice of the point cloud
+#' @param method either 'convex' or 'concave' depending if a convex or concave hull should be used
+#' @param dTolerance the tolerance for simplification of the concave hull
+#' @param concavity the concavity parameter for the concave hull ignored if method is 'convex'
+#' 
+#' @return the convex/concave perimeter of the slice in point cloud units
 convex_perimeter <- function(slice, method = c("convex", "concave"), dTolerance = 0.05, concavity = 1){
   method <- method[1]
   xy <- slice@data[,c("X","Y")] |> as.data.frame()
@@ -90,7 +126,18 @@ convex_perimeter <- function(slice, method = c("convex", "concave"), dTolerance 
   }
 }
 
-# function to compute the concave/convex stem surface area
+#' function to compute the concave/convex stem surface area
+#' 
+#' The function slices the point cloud in Z direction in slices of a given
+#' height and calculates the convex/concave perimeter of each slice * height.
+#' 
+#' @param las a LAS object of a tree trunk
+#' @param slice_height the height of the slices
+#' @param method either 'convex' or 'concave' depending if a convex or concave hull should be used
+#' @param dTolerance the tolerance for simplification of the concave hull
+#' @param concavity the concavity parameter for the concave hull ignored if method is 'convex'
+#' 
+#' @return the surface area of the stem in point cloud units
 stem_surface_area <- function(las, slice_height = 0.1, method = c("convex", "concave"), dTolerance = 0.01, concavity = 2){
   z_range <- range(las$Z)
   z_slices <- seq(z_range[1], z_range[2], slice_height)
@@ -104,13 +151,28 @@ stem_surface_area <- function(las, slice_height = 0.1, method = c("convex", "con
   return(stem_surface_area)
 }
 
-# function to compute the mean coordinate
+#' function to compute the mean coordinate
+#' 
+#' The function is a simple wrapper to calculate the center
+#' of gravity of a point cloud
+#' 
+#' @param las a LAS object of a tree trunk
+#' 
+#' @return the mean coordinate of the point cloud
 mean_coordinate <- function(las){
   return(c(mean(las$X), mean(las$Y), mean(las$Z)))
 }
 
 
-# function to compute the eigenvalues
+#' function to compute geometric features based on eigenvalues
+#' 
+#' The function calculates the curvature, planarity and verticality of the point cloud
+#' 
+#' @param las a LAS object of a tree trunk
+#' @param k the number of neighbours to consider
+#' @param n_cores the number of cores to use
+#' 
+#' @return the LAS object with the added attributes
 trunk_features <- function(las, k = 10L, n_cores = ceiling(parallel::detectCores()/2)) {
   # check if inputs of the right type
   if (!lidR::is(las,"LAS")) {
