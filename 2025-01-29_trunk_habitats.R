@@ -85,7 +85,7 @@ stem_volume <- function(las, slice_height = 0.1, method = c("convex", "concave")
   z_slices <- seq(z_range[1], z_range[2], slice_height)
   stem_volume <- 0
   for(i in 1:(length(z_slices) - 1)){
-    slice <- filter_poi(las, Z >= z_slices[i] & Z < z_slices[i + 1])@data
+    slice <- lidR::filter_poi(las, Z >= z_slices[i] & Z < z_slices[i + 1])@data
     if(nrow(slice) > 0){
       stem_volume <- stem_volume + na2zero(convhull_area(slice[,c("X","Y")], method = method[1], concavity = concavity) * slice_height)
     }
@@ -111,8 +111,9 @@ convex_perimeter <- function(slice, method = c("convex", "concave"), dTolerance 
     return(NA)
   }
   if(method == "concave"){
-    peri <- xy |> sf::st_as_sf(coords = c("X","Y")) |> 
-      concaveman::concaveman(concavity = concavity) |>
+    poly <- xy |> sf::st_as_sf(coords = c("X","Y")) |> 
+      concaveman::concaveman(concavity = concavity)
+    peri <- poly |>
       sf::st_cast("MULTILINESTRING") |> 
       sf::st_simplify(dTolerance = dTolerance) |> 
       sf::st_length() |> sum()
@@ -125,6 +126,91 @@ convex_perimeter <- function(slice, method = c("convex", "concave"), dTolerance 
     stop("method must be either 'convex' or 'concave'")
   }
 }
+
+#' plot concave stem model
+#' 
+#' The function slices the point cloud in Z direction in slices of a given
+#' height and calculates the convex/concave hull of each slice.
+#' These slices get extruded and plottet by rgl to visualize the stem model.
+#' Plots are conducted in local coordinates to avoid numeric problems with rgl.
+#' Concave plots might be gappy due to the problems of rgl to triangulate the 
+#' more complicated concave polygons.
+#' 
+#' @param las a LAS object of a tree trunk
+#' @param slice_height the height of the slices
+#' @param method either 'convex' or 'concave' depending if a convex or concave hull should be used
+#' @param dTolerance the tolerance for simplification of the concave hull
+#' @param concavity the concavity parameter for the concave hull ignored if method is 'convex'
+#' 
+plot_convex <- function(las, slice_height = 0.1, method = c("convex", "concave"), dTolerance = 0.01, concavity = 2){
+  z_range <- range(las$Z)
+  z_slices <- seq(z_range[1], z_range[2], slice_height)
+  slice_polys <- list()
+  for(i in 1:(length(z_slices) - 1)){
+    slice <- filter_poi(las, Z >= z_slices[i] & Z < z_slices[i + 1])
+    if(nrow(slice) > 0){
+      xy <- slice@data[,c("X","Y")] |> as.data.frame()
+      xyz <- cbind(xy, Z = z_slices[i])
+      if(method == "concave"){
+        poly <- xyz |> sf::st_as_sf(coords = c("X","Y","Z")) |> 
+          concaveman::concaveman(concavity = concavity) |> 
+          sf::st_simplify(dTolerance = dTolerance) |> 
+          sf::st_buffer(0.01) |> 
+          sf::st_buffer(-0.01)
+        # break apart if multipolygon is returned
+        if(length(poly) > 1){
+          for(p in poly){
+            slice_polys <- c(slice_polys,p)
+          }
+          next
+        } else {
+          slice_polys <- c(slice_polys,poly)
+        }
+        
+      } else if(method == "convex"){
+        ch <- chull(xy)
+        ch <- c(ch, ch[1])
+        poly <- xyz[ch,] |> sf::st_as_sf(coords = c("X","Y","Z")) |> sf::st_union() |> sf::st_convex_hull() 
+        slice_polys <- c(slice_polys,poly)
+      } else {
+        stop("method must be either 'convex' or 'concave'")
+      }
+    }
+  }
+  # get local coordinates to avoid problems with rgl plotting
+  xyz <- sf::st_coordinates(slice_polys[[1]])[,1:3]
+  colmins <- apply(xyz, 2, min)
+  
+  # transform to rgl objects
+  bodys <- list()
+  i <- 1
+  j <- 0
+  for(sp in slice_polys){
+    try({
+      j <- j + 1
+      xyz <- sf::st_coordinates(sp)[,1:3]
+      if(nrow(xyz) < 3){
+        next
+      }
+      xyz <- apply(xyz, 1, function(x) x - colmins) |> t()
+      bodys[[j]] <- rgl::extrude3d(xyz, thickness = 0.1) |> rgl::translate3d(0,0,i * slice_height)
+      
+    } 
+    , silent = TRUE)
+    i <- i + 1
+  }
+  # exclude NULL slices from bodys
+  bodys <- bodys[!sapply(bodys, is.null)]
+  
+  # perform plot
+  rgl::open3d()
+  for( i in 1:length(bodys)){
+    rgl::shade3d(bodys[[i]], col = "#ff000022")
+    #rgl::shade3d(polys[[i]], col = "#ff000022")
+  }
+  return(bodys)
+}
+slice_polys <- plot_convex(las, method = "concave", dTolerance = 0.03)
 
 #' function to compute the concave/convex stem surface area
 #' 
@@ -143,7 +229,7 @@ stem_surface_area <- function(las, slice_height = 0.1, method = c("convex", "con
   z_slices <- seq(z_range[1], z_range[2], slice_height)
   stem_surface_area <- 0
   for(i in 1:(length(z_slices) - 1)){
-    slice <- filter_poi(las, Z >= z_slices[i] & Z < z_slices[i + 1])
+    slice <- lidR::filter_poi(las, Z >= z_slices[i] & Z < z_slices[i + 1])
     if(nrow(slice) > 0){
       stem_surface_area <- stem_surface_area + na2zero(convex_perimeter(slice, method = method[1], dTolerance = dTolerance, concavity = concavity) * slice_height)
     }
@@ -254,3 +340,4 @@ for( f in files){
 close(pb)
 t2 <- Sys.time()
 t2 - t1
+write.csv(results, "X:/Weidbuchen/Edited/pointclouds/results.csv", row.names = FALSE)
